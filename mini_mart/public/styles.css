@@ -1,0 +1,17 @@
+body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+
+#auth-container, #product-container {
+    margin-top: 50px;
+}
+
+.auth-form {
+    display: none;
+    margin-top: 20px;
+}
+
+.product {
+    margin: 20px;
+}
