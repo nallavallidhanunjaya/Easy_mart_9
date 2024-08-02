@@ -1,45 +1,88 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mini Mart</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <div id="auth-container">
-        <button onclick="showSignUp()">Sign Up</button>
-        <button onclick="showSignIn()">Sign In</button>
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const bcrypt = require('bcrypt');
+const mongoose = require('mongoose');
+const AWS = require('aws-sdk');
 
-        <div id="sign-up-form" class="auth-form">
-            <h2>Sign Up</h2>
-            <input type="text" id="sign-up-username" placeholder="Username">
-            <input type="password" id="sign-up-password" placeholder="Password">
-            <button onclick="signUp()">Sign Up</button>
-        </div>
+const app = express();
+const port = 80;
 
-        <div id="sign-in-form" class="auth-form">
-            <h2>Sign In</h2>
-            <input type="text" id="sign-in-username" placeholder="Username">
-            <input type="password" id="sign-in-password" placeholder="Password">
-            <button onclick="signIn()">Sign In</button>
-        </div>
-    </div>
+app.use(bodyParser.json());
+app.use(express.static('public'));
 
-    <div id="product-container" style="display:none;">
-        <h2>Products</h2>
-        <div class="product" id="product1">
-            <p>Product 1</p>
-            <button onclick="buyProduct('Product 1')">Buy</button>
-        </div>
-        <div class="product" id="product2">
-            <p>Product 2</p>
-            <button onclick="buyProduct('Product 2')">Buy</button>
-        </div>
-        <button onclick="showPurchasedItems()">Show Purchased Items</button>
-        <div id="purchased-items"></div>
-    </div>
+mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
 
-    <script src="scripts.js"></script>
-</body>
-</html>
+const userSchema = new mongoose.Schema({
+    username: String,
+    password: String
+});
+
+const purchaseSchema = new mongoose.Schema({
+    username: String,
+    productName: String
+});
+
+const User = mongoose.model('User', userSchema);
+const Purchase = mongoose.model('Purchase', purchaseSchema);
+
+AWS.config.update({ region: 'us-east-1' });
+const sns = new AWS.SNS();
+
+app.post('/signup', async (req, res) => {
+    const { username, password } = req.body;
+    const existingUser = await User.findOne({ username });
+
+    if (existingUser) {
+        return res.json({ success: false, message: 'Username already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ username, password: hashedPassword });
+    await user.save();
+
+    res.json({ success: true });
+});
+
+app.post('/signin', async (req, res) => {
+    const { username, password } = req.body;
+    const user = await User.findOne({ username });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.json({ success: false, message: 'Credentials do not match. Please sign up.' });
+    }
+
+    res.json({ success: true });
+});
+
+app.post('/buy', async (req, res) => {
+    const { productName } = req.body;
+    const username = 'testUser'; // Assume a logged-in user for simplicity
+
+    const purchase = new Purchase({ username, productName });
+    await purchase.save();
+
+    const params = {
+        Message: `You have purchased ${productName}`,
+        TopicArn: process.env.AWS_TOPIC_ARN
+    };
+
+    sns.publish(params, (err, data) => {
+        if (err) console.error(err);
+        else console.log('SNS publish success:', data);
+    });
+
+    res.json({ success: true });
+});
+
+app.get('/purchased-items', async (req, res) => {
+    const username = 'testUser'; // Assume a logged-in user for simplicity
+    const purchases = await Purchase.find({ username });
+    const items = purchases.map(purchase => purchase.productName);
+
+    res.json({ items });
+});
+
+app.listen(port, () => {
+    console.log(`Server is running at http://localhost:${port}`);
+});
